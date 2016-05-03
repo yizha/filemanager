@@ -8,6 +8,7 @@ import (
 	"fmt"
 	_ "github.com/go-sql-driver/mysql"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -109,7 +110,7 @@ func saveEntries(db *sql.DB, cnt int, args []interface{}) {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Printf("insert into entry: %v rows affected\n", rowsAffected)
+	log.Printf("insert into entry: %v rows affected\n", rowsAffected)
 }
 
 func scan(db *sql.DB, dirPath string) {
@@ -118,7 +119,7 @@ func scan(db *sql.DB, dirPath string) {
 	walkFunc := func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			if info != nil && info.IsDir() {
-				fmt.Printf("skipping directory %v due to error %v\n", path, err)
+				log.Printf("skipping directory %v due to error %v\n", path, err)
 				return filepath.SkipDir
 			} else {
 				return nil
@@ -131,7 +132,7 @@ func scan(db *sql.DB, dirPath string) {
 		if err == nil {
 			args = append(args, fi.contentMD5, fi.pathMD5, fi.path, fi.size, fi.mimeType, fi.modTime)
 			fileCnt = fileCnt + 1
-			//			fmt.Println(fi.contentMD5, fi.pathMD5,
+			//			log.Println(fi.contentMD5, fi.pathMD5,
 			//			fi.size, fi.mimeType, fi.modTime)
 			if fileCnt >= 1000 {
 				saveEntries(db, fileCnt, args)
@@ -140,7 +141,7 @@ func scan(db *sql.DB, dirPath string) {
 				args = []interface{}{}
 			}
 		} else {
-			fmt.Printf("failed to process file %v, error: %v\n", path, err)
+			log.Printf("failed to process file %v, error: %v\n", path, err)
 		}
 		return nil
 	}
@@ -178,7 +179,7 @@ func parseCmdArgs() (*DbConf, []string) {
 
 	conf := &DbConf{*protocol, *address, *username, *password, *database}
 
-	fmt.Printf("Database DSN: %v\n", getDbDsn(conf))
+	log.Printf("Database DSN: %v\n", getDbDsn(conf))
 
 	return conf, flag.Args()
 }
