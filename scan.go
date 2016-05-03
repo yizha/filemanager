@@ -7,9 +7,9 @@ import (
 	"flag"
 	"fmt"
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/rakyll/magicmime"
 	"io"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,6 +31,13 @@ func getFileInfo(path string) (*FileInfo, error) {
 		return nil, err
 	}
 
+	// guess file mime type
+	mimeType, err := magicmime.TypeByFile(path)
+	if err != nil {
+		log.Printf("FAILED to guess type for file %v, error: %v\n", path, err)
+		mimeType = "unknown"
+	}
+
 	f, err := os.Open(path)
 	defer f.Close()
 	if err != nil {
@@ -38,8 +45,6 @@ func getFileInfo(path string) (*FileInfo, error) {
 	}
 
 	// get file content md5
-	mimeType := "application/octet-stream"
-	bytes_read := 0
 	buf := make([]byte, 8192)
 	h := md5.New()
 	for {
@@ -47,14 +52,9 @@ func getFileInfo(path string) (*FileInfo, error) {
 		if err != nil && err != io.EOF {
 			return nil, err
 		}
-		// guess file mime-type
-		if bytes_read == 0 {
-			mimeType = strings.Split(http.DetectContentType(buf[:n]), ";")[0]
-		}
 		if n == 0 {
 			break
 		}
-		bytes_read = bytes_read + n
 		_, err = h.Write(buf[:n])
 		if err != nil {
 			return nil, err
@@ -113,7 +113,7 @@ func saveEntries(db *sql.DB, cnt int, args []interface{}) {
 	log.Printf("insert into entry: %v rows affected\n", rowsAffected)
 }
 
-func scan(db *sql.DB, dirPath string) {
+func scanDir(dirPath string, db *sql.DB) {
 	args := []interface{}{}
 	fileCnt := 0
 	walkFunc := func(path string, info os.FileInfo, err error) error {
@@ -192,10 +192,20 @@ func getDbConnection(conf *DbConf) *sql.DB {
 	return db
 }
 
+func scan(dirs []string, db *sql.DB) {
+	// open libmagic database file
+	if err := magicmime.Open(magicmime.MAGIC_MIME_TYPE | magicmime.MAGIC_SYMLINK | magicmime.MAGIC_ERROR); err != nil {
+		log.Fatal(err)
+	}
+	defer magicmime.Close()
+
+	for _, dirPath := range dirs {
+		scanDir(dirPath, db)
+	}
+}
+
 func main() {
 	dbConf, args := parseCmdArgs()
 	db := getDbConnection(dbConf)
-	for _, dirPath := range args {
-		scan(db, dirPath)
-	}
+	scan(args, db)
 }
