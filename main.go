@@ -4,6 +4,7 @@ import (
 	"crypto/md5"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	_ "github.com/go-sql-driver/mysql"
@@ -12,8 +13,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
-	"time"
 )
 
 type FileInfo struct {
@@ -21,16 +22,10 @@ type FileInfo struct {
 	pathMD5    string
 	path       string
 	mimeType   string
-	size       int64
-	modTime    time.Time
+	size       int
 }
 
 func getFileInfo(path string) (*FileInfo, error) {
-	fileInfo, err := os.Stat(path)
-	if err != nil {
-		return nil, err
-	}
-
 	// guess file mime type
 	mimeType, err := magicmime.TypeByFile(path)
 	if err != nil {
@@ -45,7 +40,8 @@ func getFileInfo(path string) (*FileInfo, error) {
 	}
 
 	// get file content md5
-	buf := make([]byte, 8192)
+	size := 0
+	buf := make([]byte, 1024*128)
 	h := md5.New()
 	for {
 		n, err := f.Read(buf)
@@ -55,6 +51,7 @@ func getFileInfo(path string) (*FileInfo, error) {
 		if n == 0 {
 			break
 		}
+		size = size + n
 		_, err = h.Write(buf[:n])
 		if err != nil {
 			return nil, err
@@ -67,36 +64,34 @@ func getFileInfo(path string) (*FileInfo, error) {
 	pathMD5 := hex.EncodeToString(data[:])
 
 	// return file info struct
-	size := fileInfo.Size()
-	modTime := fileInfo.ModTime()
-	fi := FileInfo{contentMD5, pathMD5, path, mimeType, size, modTime}
+	fi := FileInfo{contentMD5, pathMD5, path, mimeType, size}
 
 	return &fi, nil
 }
 
-var stmtMap = map[int]*sql.Stmt{}
+var instStmtMap = map[int]*sql.Stmt{}
 
 func getSaveEntriesDbStmt(db *sql.DB, n int) *sql.Stmt {
 	if n < 1 {
 		panic(fmt.Sprintf("cannot create mysql statement with %v args", n))
 	}
-	stmt, ok := stmtMap[n]
+	stmt, ok := instStmtMap[n]
 	if ok == true {
 		return stmt
 	}
 
 	p := make([]string, n)
 	for i := 0; i < n; i++ {
-		p[i] = "(?,?,?,?,?,?)"
+		p[i] = "(?,?,?,?,?)"
 	}
 	sql := fmt.Sprintf(
-		"insert ignore into entry (content_md5,path_md5,path,size,mime_type,mod_time) values %v",
+		"insert ignore into entry (content_md5,path_md5,path,size,mime_type) values %v",
 		strings.Join(p, ","))
 	stmt, err := db.Prepare(sql)
 	if err != nil {
 		panic(err)
 	}
-	stmtMap[n] = stmt
+	instStmtMap[n] = stmt
 	return stmt
 }
 
@@ -110,7 +105,7 @@ func saveEntries(db *sql.DB, cnt int, args []interface{}) {
 	if err != nil {
 		panic(err)
 	}
-	log.Printf("insert into entry: %v rows affected\n", rowsAffected)
+	log.Printf("saved %v out of %v file entries into db\n", rowsAffected, cnt)
 }
 
 func scanDir(dirPath string, db *sql.DB) {
@@ -130,10 +125,9 @@ func scanDir(dirPath string, db *sql.DB) {
 		}
 		fi, err := getFileInfo(path)
 		if err == nil {
-			args = append(args, fi.contentMD5, fi.pathMD5, fi.path, fi.size, fi.mimeType, fi.modTime)
+			args = append(args, fi.contentMD5, fi.pathMD5, fi.path, fi.size, fi.mimeType)
 			fileCnt = fileCnt + 1
-			//			log.Println(fi.contentMD5, fi.pathMD5,
-			//			fi.size, fi.mimeType, fi.modTime)
+			// bulk save to db
 			if fileCnt >= 1000 {
 				saveEntries(db, fileCnt, args)
 				// reset counter and args
@@ -146,6 +140,7 @@ func scanDir(dirPath string, db *sql.DB) {
 		return nil
 	}
 	filepath.Walk(dirPath, walkFunc)
+	// save what is left to db
 	if fileCnt > 0 {
 		saveEntries(db, fileCnt, args)
 	}
@@ -204,8 +199,140 @@ func scan(dirs []string, db *sql.DB) {
 	}
 }
 
+func getExtFromType(typ string) string {
+	switch typ {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "video/mpeg":
+		return ".mpg"
+	case "video/mp4":
+		return ".mp4"
+	}
+	return ".dat"
+}
+
+var updStsStmtMap = map[int]*sql.Stmt{}
+
+func getUpdateStatusStmt(db *sql.DB, n int) *sql.Stmt {
+	stmt, ok := updStsStmtMap[n]
+	if ok == true {
+		return stmt
+	}
+	p := make([]string, n)
+	for i := 0; i < n; i++ {
+		p[i] = "(?,?)"
+	}
+	sql := fmt.Sprintf(
+		"insert into entry (id,status) values %v on duplicate key update status=values(status)",
+		strings.Join(p, ","))
+	stmt, err := db.Prepare(sql)
+	if err != nil {
+		panic(err)
+	}
+	updStsStmtMap[n] = stmt
+	return stmt
+}
+
+func updateStatus(db *sql.DB, ids []int, sts int) {
+	var args []interface{}
+	for _, id := range ids {
+		args = append(args, id, sts)
+	}
+	stmt := getUpdateStatusStmt(db, len(ids))
+	r, err := stmt.Exec(args...)
+	if err != nil {
+		panic(err)
+	}
+	rowsAffected, err := r.RowsAffected()
+	if err != nil {
+		panic(err)
+	}
+	log.Printf("updated %v file entries' status in db\n", rowsAffected)
+}
+
+func link(args []string, db *sql.DB) {
+	if args == nil || len(args) < 1 {
+		log.Fatal(errors.New("Missing link target root dir!"))
+	}
+	root := args[0]
+	sizeThreshold := int64(1024 * 1024 * 1024 * 10) // 10GB
+	if len(args) > 1 {
+		gb, err := strconv.Atoi(args[1])
+		if err != nil {
+			panic(err)
+		}
+		sizeThreshold = int64(1024 * 1024 * 1024 * gb)
+	}
+
+	// query db to get ready files
+	sql := "select id,content_md5,mime_type,path,size from entry where status=? order by id asc"
+	rows, err := db.Query(sql, 0)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+
+	var processed []int
+	var totalSize int64
+	var cnt = 0
+
+	var id int
+	var contentMD5 string
+	var mimeType string
+	var path string
+	var size int64
+
+	for rows.Next() {
+		if err = rows.Scan(&id, &contentMD5, &mimeType, &path, &size); err != nil {
+			log.Fatal(err)
+		}
+		// create dir
+		dir := filepath.Join(root, contentMD5[0:2], contentMD5[2:4], contentMD5[4:6], contentMD5[6:8])
+		if err = os.MkdirAll(dir, 0755); err != nil {
+			panic(err)
+		}
+		// create symlink
+		ext := filepath.Ext(path)
+		if ext == "" {
+			ext = getExtFromType(mimeType)
+		}
+		ext = strings.ToLower(ext)
+		filename := fmt.Sprintf("%v%v", contentMD5, ext)
+		if err = os.Symlink(path, filepath.Join(dir, filename)); err != nil {
+			panic(err)
+		}
+
+		processed = append(processed, id)
+		totalSize = totalSize + size
+		cnt = cnt + 1
+		if totalSize > sizeThreshold {
+			break
+		}
+		if len(processed) > 1000 {
+			updateStatus(db, processed, 1)
+			processed = []int{}
+		}
+	}
+	if err = rows.Err(); err != nil {
+		log.Fatal(err)
+	}
+	if len(processed) > 0 {
+		updateStatus(db, processed, 1)
+	}
+	log.Printf("Linked %v files, size: %v bytes", cnt, totalSize)
+}
+
 func main() {
 	dbConf, args := parseCmdArgs()
 	db := getDbConnection(dbConf)
-	scan(args, db)
+	switch args[0] {
+	case "scan":
+		scan(args[1:], db)
+		return
+	case "link":
+		link(args[1:], db)
+		return
+	}
 }
