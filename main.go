@@ -249,7 +249,7 @@ func updateStatus(db *sql.DB, ids []int, sts int) {
 	if err != nil {
 		panic(err)
 	}
-	log.Printf("updated %v file entries' status in db\n", rowsAffected)
+	log.Printf("updated %v file entries' status in db\n", rowsAffected/2)
 }
 
 func link(args []string, db *sql.DB) {
@@ -335,4 +335,5 @@ func main() {
 		link(args[1:], db)
 		return
 	}
+	log.Fatal(fmt.Sprintf("unsupported subcommand: %v", args[0]))
 }
