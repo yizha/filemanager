@@ -292,8 +292,7 @@ func link(args []string, db *sql.DB) {
 			log.Fatal(err)
 		}
 		// create dir
-		hashDir := fmt.Sprintf("%v/%v/%v/%v",
-			contentMD5[0:2], contentMD5[2:4], contentMD5[4:6], contentMD5[6:8])
+		hashDir := fmt.Sprintf("%v/%v", contentMD5[0:2], contentMD5[2:4])
 		var dir string
 		if strings.HasPrefix(mimeType, "image/") {
 			dir = filepath.Join(root, "Pictures", hashDir)
