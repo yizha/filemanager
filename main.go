@@ -123,6 +123,9 @@ func scanDir(dirPath string, db *sql.DB) {
 		if info.IsDir() {
 			return nil
 		}
+		if strings.ToLower(filepath.Base(path)) == "thumbs.db" {
+			return nil
+		}
 		fi, err := getFileInfo(path)
 		if err == nil {
 			args = append(args, fi.contentMD5, fi.pathMD5, fi.path, fi.size, fi.mimeType)
@@ -289,7 +292,16 @@ func link(args []string, db *sql.DB) {
 			log.Fatal(err)
 		}
 		// create dir
-		dir := filepath.Join(root, contentMD5[0:2], contentMD5[2:4], contentMD5[4:6], contentMD5[6:8])
+		hashDir := fmt.Sprintf("%v/%v/%v/%v",
+			contentMD5[0:2], contentMD5[2:4], contentMD5[4:6], contentMD5[6:8])
+		var dir string
+		if strings.HasPrefix(mimeType, "image/") {
+			dir = filepath.Join(root, "Pictures", hashDir)
+		} else if strings.HasPrefix(mimeType, "video/") {
+			dir = filepath.Join(root, "Videos", hashDir)
+		} else {
+			dir = filepath.Join(root, "Documents", hashDir)
+		}
 		if err = os.MkdirAll(dir, 0755); err != nil {
 			panic(err)
 		}
