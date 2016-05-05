@@ -322,7 +322,7 @@ func link(args []string, db *sql.DB) {
 		if totalSize > sizeThreshold {
 			break
 		}
-		if len(processed) > 1000 {
+		if len(processed) >= 1000 {
 			updateStatus(db, processed, 1)
 			processed = []int{}
 		}
