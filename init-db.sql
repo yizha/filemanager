@@ -16,7 +16,7 @@ create table if not exists file (
     primary key (id),
     unique  key k_file_1 (path_md5),
             key k_file_2 (path_prefix),
-            key k_file_3 (content_md5),
+    unique  key k_file_3 (content_md5),
             key k_file_4 (mime_type),
             key k_file_5 (status)
 );
