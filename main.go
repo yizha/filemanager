@@ -82,10 +82,10 @@ func getSaveEntriesDbStmt(db *sql.DB, n int) *sql.Stmt {
 
 	p := make([]string, n)
 	for i := 0; i < n; i++ {
-		p[i] = "(?,?,?,?,?)"
+		p[i] = "(?,?,?,?,?,?)"
 	}
 	sql := fmt.Sprintf(
-		"insert ignore into entry (content_md5,path_md5,path,size,mime_type) values %v",
+		"insert into file (content_md5,path_md5,path,path_prefix,size,mime_type) values %v",
 		strings.Join(p, ","))
 	stmt, err := db.Prepare(sql)
 	if err != nil {
@@ -105,10 +105,11 @@ func saveEntries(db *sql.DB, cnt int, args []interface{}) {
 	if err != nil {
 		panic(err)
 	}
-	log.Printf("saved %v out of %v file entries into db\n", rowsAffected, cnt)
+	log.Printf("saved %v out of %v files' info to db\n", rowsAffected, cnt)
 }
 
 func scanDir(dirPath string, db *sql.DB) {
+	dirPath = filepath.Clean(dirPath)
 	args := []interface{}{}
 	fileCnt := 0
 	walkFunc := func(path string, info os.FileInfo, err error) error {
@@ -128,7 +129,7 @@ func scanDir(dirPath string, db *sql.DB) {
 		}
 		fi, err := getFileInfo(path)
 		if err == nil {
-			args = append(args, fi.contentMD5, fi.pathMD5, fi.path, fi.size, fi.mimeType)
+			args = append(args, fi.contentMD5, fi.pathMD5, fi.path, dirPath, fi.size, fi.mimeType)
 			fileCnt = fileCnt + 1
 			// bulk save to db
 			if fileCnt >= 1000 {
@@ -171,7 +172,7 @@ func parseCmdArgs() (*DbConf, []string) {
 	address := flag.String("addr", "localhost:3306", "DB server address")
 	username := flag.String("username", "filemanager", "DB access username")
 	password := flag.String("password", "filemanager", "DB access password")
-	database := flag.String("database", "my_media_file", "database name")
+	database := flag.String("database", "my_file", "database name")
 
 	flag.Parse()
 
@@ -202,20 +203,6 @@ func scan(dirs []string, db *sql.DB) {
 	}
 }
 
-func getExtFromType(typ string) string {
-	switch typ {
-	case "image/jpeg":
-		return ".jpg"
-	case "image/png":
-		return ".png"
-	case "video/mpeg":
-		return ".mpg"
-	case "video/mp4":
-		return ".mp4"
-	}
-	return ".dat"
-}
-
 var updStsStmtMap = map[int]*sql.Stmt{}
 
 func getUpdateStatusStmt(db *sql.DB, n int) *sql.Stmt {
@@ -228,7 +215,7 @@ func getUpdateStatusStmt(db *sql.DB, n int) *sql.Stmt {
 		p[i] = "(?,?)"
 	}
 	sql := fmt.Sprintf(
-		"insert into entry (id,status) values %v on duplicate key update status=values(status)",
+		"insert into file (id,status) values %v on duplicate key update status=values(status)",
 		strings.Join(p, ","))
 	stmt, err := db.Prepare(sql)
 	if err != nil {
@@ -270,7 +257,18 @@ func link(args []string, db *sql.DB) {
 	}
 
 	// query db to get ready files
-	sql := "select id,content_md5,mime_type,path,size from entry where status=? order by id asc"
+	sql := " select"
+	sql += "  id,"
+	sql += "  content_md5,"
+	sql += "  mime_type,"
+	sql += "  path,"
+	sql += "  path_prefix,"
+	sql += "  size"
+	sql += " from"
+	sql += "  file"
+	sql += " where"
+	sql += "  status=?"
+	sql += "  and (mime_type like 'image/%' or mime_type like 'video/%')"
 	rows, err := db.Query(sql, 0)
 	if err != nil {
 		log.Fatal(err)
@@ -285,33 +283,30 @@ func link(args []string, db *sql.DB) {
 	var contentMD5 string
 	var mimeType string
 	var path string
+	var pathPrefix string
 	var size int64
 
 	for rows.Next() {
-		if err = rows.Scan(&id, &contentMD5, &mimeType, &path, &size); err != nil {
+		if err = rows.Scan(&id, &contentMD5, &mimeType, &path, &pathPrefix, &size); err != nil {
 			log.Fatal(err)
 		}
-		// create dir
-		hashDir := fmt.Sprintf("%v/%v", contentMD5[0:2], contentMD5[2:4])
-		var dir string
+		relativePath := path[len(pathPrefix):]
+		var typePath string
+		var linkPath string
 		if strings.HasPrefix(mimeType, "image/") {
-			dir = filepath.Join(root, "Pictures", hashDir)
+			typePath = "Pictures"
 		} else if strings.HasPrefix(mimeType, "video/") {
-			dir = filepath.Join(root, "Videos", hashDir)
+			typePath = "Videos"
 		} else {
-			dir = filepath.Join(root, "Documents", hashDir)
+			typePath = "Documents"
 		}
+		linkPath = filepath.Join(root, typePath, relativePath)
+		dir := filepath.Dir(linkPath)
 		if err = os.MkdirAll(dir, 0755); err != nil {
 			panic(err)
 		}
 		// create symlink
-		ext := filepath.Ext(path)
-		if ext == "" {
-			ext = getExtFromType(mimeType)
-		}
-		ext = strings.ToLower(ext)
-		filename := fmt.Sprintf("%v%v", contentMD5, ext)
-		if err = os.Symlink(path, filepath.Join(dir, filename)); err != nil {
+		if err = os.Symlink(path, linkPath); err != nil {
 			panic(err)
 		}
 
