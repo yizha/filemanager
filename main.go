@@ -85,7 +85,7 @@ func getSaveEntriesDbStmt(db *sql.DB, n int) *sql.Stmt {
 		p[i] = "(?,?,?,?,?,?)"
 	}
 	sql := fmt.Sprintf(
-		"insert into file (content_md5,path_md5,path,path_prefix,size,mime_type) values %v",
+		"insert ignore into file (content_md5,path_md5,path,path_prefix,size,mime_type) values %v",
 		strings.Join(p, ","))
 	stmt, err := db.Prepare(sql)
 	if err != nil {
