@@ -24,8 +24,8 @@ type Blob interface {
 	// return the type
 	Type() BlobType
 
-	// return the blob location
-	Location() string
+	// return the blob filename
+	Filename() string
 
 	// return the blob size, in bytes
 	Size() int64

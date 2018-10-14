@@ -40,19 +40,28 @@ func (h *Hash) String() string {
 	return h.str
 }
 
-// NewHash returns a Hash object with given hash algorithm and
-// hash value in []byte.
-func newHash(alg string, data []byte) *Hash {
+// NewSha1Hash creates a Hash object with "sha1" algorithm and
+// the given []byte as hash value.
+func NewSha1Hash(data []byte) *Hash {
 	return &Hash{
-		alg:  alg,
+		alg:  "sha1",
 		data: data,
 		hex:  "",
 		str:  "",
 	}
 }
 
-// NewSha1Hash creates a Hash object with "sha1" algorithm and
-// given []byte as hash value.
-func NewSha1Hash(data []byte) *Hash {
-	return newHash("sha1", data)
+// NewSha1HashFromHex creates a Hash object with "sha1" algorithm
+// and the given hex string as hash value.
+func NewSha1HashFromHex(s string) (*Hash, error) {
+	data, err := hex.DecodeString(s)
+	if err != nil {
+		return nil, err
+	}
+	return &Hash{
+		alg:  "sha1",
+		data: data,
+		hex:  s,
+		str:  "",
+	}, nil
 }

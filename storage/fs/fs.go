@@ -21,10 +21,10 @@ import (
 
 // Blob represents a file on the file system.
 type Blob struct {
-	fullpath string
+	filename string
 	blob     []byte
+	size     int64
 	hash     *util.Hash
-	lg       *zerolog.Logger
 }
 
 // Type returns storage.FileBlob
@@ -32,18 +32,24 @@ func (f *Blob) Type() storage.BlobType {
 	return storage.FileBlob
 }
 
-// Location returns the full path to the file as an URL.
-func (f *Blob) Location() string {
-	return f.fullpath
+// Filename returns the file name of the blob.
+func (f *Blob) Filename() string {
+	return f.filename
 }
 
 // Size returns the file size, in bytes.
 func (f *Blob) Size() int64 {
-	return int64(len(f.blob))
+	if f.size == 0 {
+		f.size = int64(len(f.Bytes()))
+	}
+	return f.size
 }
 
 // Bytes return the file content as []byte.
 func (f *Blob) Bytes() []byte {
+	if f.blob == nil {
+		f.blob = make([]byte, 0, 0)
+	}
 	return f.blob
 }
 
@@ -51,14 +57,14 @@ func (f *Blob) Bytes() []byte {
 // it returns the number of bytes written and error
 // if there is.
 func (f *Blob) Save(w io.Writer) (int64, error) {
-	return io.Copy(w, bytes.NewBuffer(f.blob))
+	return io.Copy(w, bytes.NewBuffer(f.Bytes()))
 }
 
 // Hash returns a *util.Hash object represents the hash
 // of the file content.
 func (f *Blob) Hash() *util.Hash {
 	if f.hash == nil {
-		h := sha1.Sum(f.blob)
+		h := sha1.Sum(f.Bytes())
 		f.hash = util.NewSha1Hash(h[:])
 	}
 	return f.hash
@@ -145,8 +151,9 @@ func load(
 			pr.AddCount(1)
 			pr.AddSize(size)
 			blob := &Blob{
-				fullpath: fpath,
+				filename: filepath.Base(fpath),
 				blob:     data,
+				size:     size,
 				hash:     nil,
 			}
 			l.Info().
@@ -264,16 +271,16 @@ func blobExists(dir string, size int64) (bool, error) {
 }
 
 type blobMeta struct {
-	ContentHash      string `json:"content-hash"`
-	Size             int64  `json:"size"`
-	OriginalFilename string `json:"original-filename,omitempty"`
+	ContentHash string `json:"content-hash"`
+	Size        int64  `json:"size"`
+	Filename    string `json:"filename,omitempty"`
 }
 
 func meta(b storage.Blob) ([]byte, error) {
 	return json.Marshal(blobMeta{
-		ContentHash:      b.Hash().String(),
-		Size:             int64(len(b.Bytes())),
-		OriginalFilename: filepath.Base(b.Location()),
+		ContentHash: b.Hash().String(),
+		Size:        int64(len(b.Bytes())),
+		Filename:    b.Filename(),
 	})
 }
 
