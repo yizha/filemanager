@@ -367,7 +367,10 @@ func save(
 func (s *Storage) Scan() storage.ScanResult {
 	id := uuid.Must(uuid.NewV4()).String()
 	result := storage.NewScanResult(id)
-	l := s.lg.With().Str("scan", id).Logger()
+	l := s.lg.With().
+		Str("process-id", id).
+		Str("process-name", "scan").
+		Logger()
 	go scan(s.root, s.maxLoader, s.skip, result, &l)
 	return result
 }
@@ -396,7 +399,10 @@ func store(
 func (s *Storage) Store(ch chan storage.Blob) storage.StoreResult {
 	id := uuid.Must(uuid.NewV4()).String()
 	result := storage.NewStoreResult(id)
-	l := s.lg.With().Str("store", id).Logger()
+	l := s.lg.With().
+		Str("process-id", id).
+		Str("process-name", "store").
+		Logger()
 	go store(s.root, s.maxSaver, ch, result, &l)
 	return result
 }
