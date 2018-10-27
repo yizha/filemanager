@@ -5,12 +5,12 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 
 	"filemanager/blob"
 	"filemanager/meta"
+	"filemanager/util"
 
 	"github.com/rs/zerolog"
 )
@@ -165,7 +165,7 @@ func detect(
 		mt := MapName2Mime(f.Name())
 		fname := f.Name()
 		bm.Add("filename", meta.StringValue(fname))
-		bm.Add("fileext", meta.StringValue(filepath.Ext(fname)))
+		bm.Add("fileext", meta.StringValue(util.FileExt(fname)))
 		bm.Add("fileext-mime-type", meta.StringValue(mt.Type))
 		bm.Add("fileext-mime-subtype", meta.StringValue(mt.Subtype))
 		path2meta[path] = bm

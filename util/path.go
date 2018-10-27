@@ -30,3 +30,12 @@ func PathToUrl(path string) *url.URL {
 	}
 	return u
 }
+
+func FileExt(s string) string {
+	ext := filepath.Ext(s)
+	if len(ext) > 0 && ext[0:1] == "." {
+		return ext[1:]
+	} else {
+		return ext
+	}
+}

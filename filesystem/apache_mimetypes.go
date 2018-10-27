@@ -1,8 +1,9 @@
 package filesystem
 
 import (
-	"path/filepath"
 	"strings"
+
+	"filemanager/util"
 )
 
 const apacheMimeTypes = `
@@ -1907,7 +1908,7 @@ func init() {
 }
 
 func MapName2Mime(name string) *MimeType {
-	mt := ext2mime[filepath.Ext(name)]
+	mt := ext2mime[util.FileExt(name)]
 	if mt == nil {
 		mt = defaultMimeType
 	}
