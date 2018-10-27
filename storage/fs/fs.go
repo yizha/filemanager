@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -19,12 +20,35 @@ import (
 	"github.com/satori/go.uuid"
 )
 
+type blobReadCloser struct {
+	b *bytes.Buffer
+}
+
+func (b *blobReadCloser) Read(p []byte) (n int, err error) {
+	return b.b.Read(p)
+}
+func (b *blobReadCloser) Close() error {
+	b.b = nil
+	return nil
+}
+
+func newBlobReadCloser(b []byte) *blobReadCloser {
+	return &blobReadCloser{bytes.NewBuffer(b)}
+}
+
 // Blob represents a file on the file system.
 type Blob struct {
-	filename string
-	blob     []byte
-	size     int64
-	hash     *util.Hash
+	path string
+	url  *url.URL
+	name string
+	blob []byte
+	size int64
+	hash *util.Hash
+}
+
+// Path returns the full path to the file
+func (f *Blob) Path() string {
+	return f.path
 }
 
 // Type returns storage.FileBlob
@@ -32,42 +56,64 @@ func (f *Blob) Type() storage.BlobType {
 	return storage.FileBlob
 }
 
+// Location returns the full path to the file on file system
+func (f *Blob) Url() *url.URL {
+	return f.url
+}
+
 // Filename returns the file name of the blob.
-func (f *Blob) Filename() string {
-	return f.filename
+func (f *Blob) Name() string {
+	return f.name
 }
 
 // Size returns the file size, in bytes.
-func (f *Blob) Size() int64 {
-	if f.size == 0 {
-		f.size = int64(len(f.Bytes()))
-	}
-	return f.size
+func (f *Blob) Size() (int64, error) {
+	return f.size, nil
 }
 
-// Bytes return the file content as []byte.
-func (f *Blob) Bytes() []byte {
-	if f.blob == nil {
-		f.blob = make([]byte, 0, 0)
+// Load loads the file content from underlying storage and stores
+// it as []byte in memory, it also saves its size and calculate
+// its hash
+func (f *Blob) load() error {
+	if f.blob != nil {
+		f.size = int64(len(f.blob))
+		h := sha1.Sum(f.blob)
+		f.hash = util.NewSha1Hash(h[:])
+		return nil
 	}
+	ff, err := os.Open(f.path)
+	if err != nil {
+		return err
+	}
+	defer ff.Close()
+	blob, err := ioutil.ReadAll(ff)
+	if err != nil {
+		return err
+	}
+	f.blob = blob
+	f.size = int64(len(blob))
+	h := sha1.Sum(blob)
+	f.hash = util.NewSha1Hash(h[:])
+	return nil
+}
+
+// Bytes returns the file content as [] byte
+func (f *Blob) Bytes() []byte {
 	return f.blob
 }
 
-// Save saves the file content to the given Writer,
-// it returns the number of bytes written and error
-// if there is.
-func (f *Blob) Save(w io.Writer) (int64, error) {
-	return io.Copy(w, bytes.NewBuffer(f.Bytes()))
+// Reader returns a bytes.Buffer wrapping its blob
+func (f *Blob) ReadCloser() (io.ReadCloser, error) {
+	if f.blob == nil {
+		return nil, fmt.Errorf("underlying blob ([]byte) is nil")
+	}
+	return newBlobReadCloser(f.blob), nil
 }
 
 // Hash returns a *util.Hash object represents the hash
 // of the file content.
-func (f *Blob) Hash() *util.Hash {
-	if f.hash == nil {
-		h := sha1.Sum(f.Bytes())
-		f.hash = util.NewSha1Hash(h[:])
-	}
-	return f.hash
+func (f *Blob) Hash() (*util.Hash, error) {
+	return f.hash, nil
 }
 
 type skipFunc func(string) bool
@@ -92,7 +138,12 @@ type Storage struct {
 }
 
 // New creates a file system storage
-func New(root string, maxSaver, maxLoader int, lg *zerolog.Logger) (storage.Storage, error) {
+func New(
+	root string,
+	maxSaver int,
+	maxLoader int,
+	lg *zerolog.Logger) (storage.Storage, error) {
+
 	root, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -113,7 +164,7 @@ func New(root string, maxSaver, maxLoader int, lg *zerolog.Logger) (storage.Stor
 	}, nil
 }
 
-func load(
+func loadFile(
 	id int,
 	fileCh chan string,
 	wg *sync.WaitGroup,
@@ -126,45 +177,32 @@ func load(
 
 	blobCh := pr.Blob()
 	for fpath := range fileCh {
-		l.Debug().Str("path", fpath).Msg("start loading file")
+		url := util.PathToUrl(fpath)
+		bl := l.With().Str("url", url.String()).Logger()
+		blob := &Blob{
+			path: fpath,
+			name: filepath.Base(fpath),
+			url:  url,
+		}
+
+		bl.Debug().Msg("start loading file")
 		t := time.Now()
-		f, err := os.Open(fpath)
+		err := blob.load()
 		if err != nil {
 			pr.AddErrorCount(1)
-			l.Error().
-				Err(err).
-				Str("path", fpath).
-				Msg("open file error")
+			bl.Error().Err(err).Msg("load")
 			continue
 		}
-		data, err := ioutil.ReadAll(f)
-		f.Close()
-		if err != nil {
-			pr.AddErrorCount(1)
-			l.Error().
-				Err(err).
-				Str("path", fpath).
-				Int64("duration", time.Now().Sub(t).Nanoseconds()).
-				Msg("read file error")
-		} else {
-			size := int64(len(data))
-			pr.AddCount(1)
-			pr.AddSize(size)
-			blob := &Blob{
-				filename: filepath.Base(fpath),
-				blob:     data,
-				size:     size,
-				hash:     nil,
-			}
-			l.Info().
-				Str("path", fpath).
-				Str("content-hash", blob.Hash().String()).
-				Int64("size", size).
-				Int64("duration", time.Now().Sub(t).Nanoseconds()).
-				Msg("done loading file")
-			blobCh <- blob
-
-		}
+		h, _ := blob.Hash()
+		size, _ := blob.Size()
+		pr.AddCount(1)
+		pr.AddSize(size)
+		bl.Info().
+			Str("content-hash", h.String()).
+			Int64("size", size).
+			Int64("duration", time.Now().Sub(t).Nanoseconds()).
+			Msg("loaded")
+		blobCh <- blob
 	}
 	wg.Done()
 
@@ -243,7 +281,7 @@ func scan(
 	wg := &sync.WaitGroup{}
 	wg.Add(loaderCnt)
 	for i := 0; i < loaderCnt; i++ {
-		go load(i, fileCh, wg, pr, lg)
+		go loadFile(i, fileCh, wg, pr, lg)
 	}
 	_scan(dirPath, skip, fileCh, pr, lg)
 	close(fileCh)
@@ -253,14 +291,8 @@ func scan(
 	lg.Debug().Msg("done scanning")
 }
 
-func blobDirPath(f storage.Blob) string {
-	h := f.Hash()
-	hex := h.Hex()
-	return filepath.Join(h.Algorithm(), hex[0:2], hex[2:4], hex[4:6], hex[6:8], hex)
-}
-
-func blobExists(dir string, size int64) (bool, error) {
-	fi, err := os.Stat(dir)
+func blobExists(path string, size int64) (bool, error) {
+	fi, err := os.Stat(path)
 	if err == nil {
 		return fi.Size() == size, nil
 	}
@@ -276,18 +308,28 @@ type blobMeta struct {
 	Filename    string `json:"filename,omitempty"`
 }
 
-func meta(b storage.Blob) ([]byte, error) {
+func newBlobMeta(h string, size int64, name string) ([]byte, error) {
 	return json.Marshal(blobMeta{
-		ContentHash: b.Hash().String(),
-		Size:        int64(len(b.Bytes())),
-		Filename:    b.Filename(),
+		ContentHash: h,
+		Size:        size,
+		Filename:    name,
 	})
+}
+
+func saveFile(path string, src io.ReadCloser) (int64, error) {
+	dst, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return 0, err
+	}
+	defer dst.Close()
+	defer src.Close()
+	return io.Copy(dst, src)
 }
 
 func save(
 	id int,
 	root string,
-	blobCh chan storage.Blob,
+	inCh chan storage.Blob,
 	wg *sync.WaitGroup,
 	pr *storage.ProcessResult,
 	lg *zerolog.Logger) {
@@ -296,28 +338,50 @@ func save(
 
 	l.Debug().Msg("started")
 
-	for blob := range blobCh {
-		blobDir := filepath.Join(root, blobDirPath(blob))
-		metaPath := filepath.Join(blobDir, "meta")
-		blobPath := filepath.Join(blobDir, "blob")
-		bl := l.With().
-			Str("content-hash", blob.Hash().String()).
-			Str("blob-dir", blobDir).
+	outCh := pr.Blob()
+	for blob := range inCh {
+		url := blob.Url()
+		bl := l.With().Str("source", url.String()).Logger()
+
+		// blob hash
+		blobHash, err := blob.Hash()
+		if err != nil {
+			pr.AddErrorCount(1)
+			bl.Error().Err(err).Msg("get source hash error")
+			continue
+		}
+		alg := blobHash.Algorithm()
+		hex := blobHash.Hex()
+		dir := filepath.Join(alg, hex[0:2], hex[2:4], hex[4:6], hex[6:8], hex)
+
+		blobDirPath := filepath.Join(root, dir)
+		metaPath := filepath.Join(blobDirPath, "meta")
+		blobPath := filepath.Join(blobDirPath, "blob")
+
+		blobHashStr := blobHash.String()
+		bl = bl.With().
+			Str("content-hash", blobHashStr).
+			Str("target-dir", blobDirPath).
 			Logger()
-		data := blob.Bytes()
-		blobSize := int64(len(data))
+
+		blobSize, err := blob.Size()
+		if err != nil {
+			pr.AddErrorCount(1)
+			bl.Error().Err(err).Msg("get blob size error")
+			continue
+		}
 
 		// skip if target already exists
 		exists, err := blobExists(blobPath, blobSize)
 		if err != nil {
 			pr.AddErrorCount(1)
-			bl.Error().Err(err).Msg("check duplication error")
+			bl.Error().Err(err).Msg("check target blob error")
 			continue
 		}
 		if exists {
 			pr.AddSkipCount(1)
 			pr.AddSkipSize(blobSize)
-			bl.Info().Msg("skip duplicate")
+			bl.Info().Msg("skip existing")
 			continue
 		}
 
@@ -326,43 +390,67 @@ func save(
 		t := time.Now()
 
 		// create dir
-		err = os.MkdirAll(blobDir, 0755)
+		err = os.MkdirAll(blobDirPath, 0755)
 		if err != nil {
 			pr.AddErrorCount(1)
-			bl.Error().Err(err).Msg("create dir error")
+			bl.Error().Err(err).Msg("create target dir error")
 			continue
 		}
 
 		// save meta file
-		metaData, err := meta(blob)
+		metaData, err := newBlobMeta(blobHashStr, blobSize, blob.Name())
 		if err != nil {
 			pr.AddErrorCount(1)
-			bl.Error().Err(err).Msg("generate metadata error")
+			bl.Error().Err(err).Msg("meta generate error")
 			continue
 		}
-		err = ioutil.WriteFile(metaPath, metaData, 0644)
+		bytesWritten, err := saveFile(metaPath, newBlobReadCloser(metaData))
 		if err != nil {
 			pr.AddErrorCount(1)
-			bl.Error().Err(err).Msg("save meta file error")
+			bl.Error().Err(err).Msg("meta file save error")
 			continue
 		}
+		bl.Info().
+			Str("meta-path", metaPath).
+			Int64("meta-size", bytesWritten).
+			Msg("blob meta written")
+		totalWritten := bytesWritten
 
 		// save blob file
-		err = ioutil.WriteFile(blobPath, data, 0644)
+		blobReadCloser, err := blob.ReadCloser()
 		if err != nil {
 			pr.AddErrorCount(1)
-			bl.Error().Err(err).Msg("save blob file error")
+			bl.Error().Err(err).Msg("blob reader error")
 			continue
 		}
+		bytesWritten, err = saveFile(blobPath, blobReadCloser)
+		if err != nil {
+			pr.AddErrorCount(1)
+			bl.Error().Err(err).Msg("blob file save error")
+			continue
+		}
+		bl.Info().
+			Str("blob-path", blobPath).
+			Int64("blob-size", bytesWritten).
+			Msg("blob file written")
+		totalWritten = totalWritten + bytesWritten
 
 		// log result
 		pr.AddCount(1)
 		pr.AddSize(blobSize)
 		bl.Info().
-			Int64("size", blobSize).
+			Int64("size", totalWritten).
 			Int64("duration", time.Now().Sub(t).Nanoseconds()).
 			Msg("done saving")
 
+		outCh <- &Blob{
+			path: blobPath,
+			url:  util.PathToUrl(blobPath),
+			name: blob.Name(),
+			blob: nil,
+			size: blobSize,
+			hash: blobHash,
+		}
 	}
 	wg.Done()
 
@@ -403,13 +491,13 @@ func store(
 }
 
 // Store stores blobs from the given channel to the file system.
-func (s *Storage) Store(ch chan storage.Blob) storage.StoreResult {
+func (s *Storage) Store(blobCh chan storage.Blob) storage.StoreResult {
 	id := uuid.Must(uuid.NewV4()).String()
 	result := storage.NewStoreResult(id)
 	l := s.lg.With().
 		Str("process-id", id).
 		Str("process-name", "store").
 		Logger()
-	go store(s.root, s.maxSaver, ch, result, &l)
+	go store(s.root, s.maxSaver, blobCh, result, &l)
 	return result
 }

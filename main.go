@@ -1,41 +1,41 @@
 package main
 
 import (
-	//"filemanager/storage"
-	"filemanager/storage/fs"
+	"fmt"
+	"os"
+	"path/filepath"
 
-	"github.com/rs/zerolog"
-	"github.com/yizha/go/logging"
-	"github.com/yizha/go/logging/writer/stdout"
+	//"filemanager/storage"
+	"filemanager/blob"
+	"filemanager/filesystem"
+	"filemanager/logging"
 )
 
 func main() {
-	logging.SetupGlobalConf(
-		logging.DefaultGlobalConf().
-			SetTimestampFormat("2006-01-02T15:04:05.999999"))
-	logging.SetupDefaults(zerolog.InfoLevel, true, false, stdout.New())
-	lg := logging.GetLogger("main")
+	lg := logging.GetLogger()
+	lg.Info().Msg("start testing ...")
 
-	src, err := fs.New("/tmp/source", 4, 4, lg)
-	if err != nil {
-		panic(err.Error())
+	inCh := make(chan *blob.FileBlob)
+
+	go func(ch chan *blob.FileBlob) {
+		filepath.Walk(os.Args[1], func(path string, info os.FileInfo, err error) error {
+			//fmt.Printf("file: %s, error: %v\n", path, err)
+			if err != nil {
+				fmt.Printf("prevent panic by handling failure accessing a path %q: %v\n", path, err)
+				return err
+			}
+			if !info.IsDir() {
+				fb := blob.NewFileBlob(path)
+				fb.Load()
+				ch <- fb
+			}
+			return nil
+		})
+		close(ch)
+	}(inCh)
+
+	lg.Info().Msg("reading output ...")
+	for bm := range filesystem.DetectMimeType("/tmp", 100, inCh, lg) {
+		fmt.Printf("%v\n", bm)
 	}
-	lg.Info().Msg("source storage initialized.")
-
-	dst, err := fs.New("/tmp/destination", 4, 4, lg)
-	if err != nil {
-		panic(err.Error())
-	}
-	lg.Info().Msg("destination storage initialized.")
-
-	sr := src.Scan()
-	dr := dst.Store(sr.Blob())
-
-	lg.Info().Msg("copying from source to destination ...")
-
-	<-sr.Done()
-	<-dr.Done()
-
-	lg.Info().Msgf("source result: %s", sr.JSONStr())
-	lg.Info().Msgf("destination result: %s", dr.JSONStr())
 }

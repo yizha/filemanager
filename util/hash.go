@@ -25,29 +25,24 @@ func (h *Hash) Bytes() []byte {
 
 // Hex returns the hash value in hex.
 func (h *Hash) Hex() string {
-	if h.hex == "" {
-		h.hex = hex.EncodeToString(h.data)
-	}
 	return h.hex
 }
 
 // String returns the string representation of the hash object
 // in format [algorithm]:[hash-value-in-hex]
 func (h *Hash) String() string {
-	if h.str == "" {
-		h.str = fmt.Sprintf("%s:%s", h.alg, h.Hex())
-	}
 	return h.str
 }
 
 // NewSha1Hash creates a Hash object with "sha1" algorithm and
 // the given []byte as hash value.
 func NewSha1Hash(data []byte) *Hash {
+	hexStr := hex.EncodeToString(data)
 	return &Hash{
 		alg:  "sha1",
 		data: data,
-		hex:  "",
-		str:  "",
+		hex:  hexStr,
+		str:  fmt.Sprintf("%s:%s", "sha1", hexStr),
 	}
 }
 
@@ -62,6 +57,6 @@ func NewSha1HashFromHex(s string) (*Hash, error) {
 		alg:  "sha1",
 		data: data,
 		hex:  s,
-		str:  "",
+		str:  fmt.Sprintf("%s:%s", "sha1", s),
 	}, nil
 }

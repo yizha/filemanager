@@ -2,43 +2,29 @@ package storage
 
 import (
 	"encoding/json"
-	"io"
 	"sync/atomic"
 	"time"
 
-	"filemanager/util"
-
-	"github.com/yizha/go/logging"
+	"filemanager/blob"
+	"filemanager/logging"
 )
 
-// BlobType represents the type of the blob
-type BlobType int
+// Storage is the interface for blob storage
+type Storage interface {
 
-// supported blob types
-const (
-	FileBlob BlobType = iota
-)
+	// Store stores all blobs from the given channel,
+	// the function is async and returns immediately
+	// the store progress and result can be quired by
+	// invoking corresponding functions on the returned
+	// StoreResult object.
+	Store(chan blob.Blob) StoreResult
 
-// Blob represents a []byte object with
-type Blob interface {
-	// return the type
-	Type() BlobType
-
-	// return the blob filename
-	Filename() string
-
-	// return the blob size, in bytes
-	Size() int64
-
-	// return the actual data
-	Bytes() []byte
-
-	// Save saves the blob to given Writer
-	// returns bytes written and error (or nil)
-	Save(io.Writer) (int64, error)
-
-	// return the hash of the blob
-	Hash() *util.Hash
+	// Scan scans blobs from this storage. It is async and
+	// returns immediately, the blobs can be read from the
+	// blob channel in the returned ScanResult as well as
+	// other useful info (counts, sizes, etc).
+	// to ignore it.
+	Scan() ScanResult
 }
 
 // StoreResult provides functions to get various data
@@ -69,7 +55,7 @@ type StoreResult interface {
 	ErrorCount() int
 
 	// the blob channel, from which reads the blob
-	Blob() chan Blob
+	Blob() chan blob.Blob
 
 	// the returned is closed when the operation completes
 	Done() chan int
@@ -99,7 +85,7 @@ type ProcessResult struct {
 	skipCount  *int64
 	skipSize   *int64
 	errorCount *int64
-	blobChan   chan Blob
+	blobChan   chan blob.Blob
 	doneChan   chan int
 	done       *int32
 }
@@ -123,7 +109,7 @@ func newProcessResult(id string, typ processType) *ProcessResult {
 		skipCount:  new(int64),
 		skipSize:   new(int64),
 		errorCount: new(int64),
-		blobChan:   make(chan Blob),
+		blobChan:   make(chan blob.Blob),
 		doneChan:   make(chan int),
 		done:       new(int32),
 	}
@@ -191,7 +177,7 @@ func (r *ProcessResult) ErrorCount() int {
 }
 
 // Blob returns a blob channel from which processed can be read.
-func (r *ProcessResult) Blob() chan Blob {
+func (r *ProcessResult) Blob() chan blob.Blob {
 	return r.blobChan
 }
 
@@ -237,18 +223,6 @@ func (r *ProcessResult) Finish() {
 // JSONStr returns json encoded string of the stats data
 // this object carries.
 func (r *ProcessResult) JSONStr() string {
-	/*			id:         id,
-	startTime:  time.Now().UTC(),
-	finishTime: time.Now().UTC().Add(-time.Second * 60),
-	duration:   -1,
-	count:      new(int64),
-	size:       new(int64),
-	skipCount:  new(int64),
-	skipSize:   new(int64),
-	errorCount: new(int64),
-	blobChan:   make(chan Blob),
-	doneChan:   make(chan int),
-	done:       new(int32),*/
 	tsFmt := "2006-01-02T15:04:05.999999"
 	done := atomic.LoadInt32(r.done) == int32(1)
 	finishTs := ""
@@ -282,28 +256,11 @@ func (r *ProcessResult) JSONStr() string {
 	}
 	data, err := json.Marshal(stats)
 	if err != nil {
-		logging.GetLogger("main").
+		logging.GetLogger().
 			Error().
 			Err(err).
 			Msg("process result json encode failure")
 		return "{}"
 	}
 	return string(data)
-}
-
-// Storage is the interface for blob storage
-type Storage interface {
-
-	// Store stores all blobs from the given channel,
-	// the function is async and returns immediately
-	// the store progress and result can be quired by
-	// invoking corresponding functions on the returned
-	// StoreResult object.
-	Store(chan Blob) StoreResult
-
-	// Scan scans blobs from this storage. It is async and
-	// returns immediately, the blobs can be read from the
-	// blob channel in the returned ScanResult as well as
-	// other useful counts/sizes.
-	Scan() ScanResult
 }

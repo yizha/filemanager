@@ -1,9 +1,12 @@
 [scan files]
 * ignore hidden files ("." files)
 
-[mimetype/extension detection]
-https://github.com/h2non/filetype
-https://github.com/gabriel-vasile/mimetype
+[mimetype]
+file -p --mime -f [file-list-file]
+file -p -f [file-list-file]
+
+[exiftool to extract image/video file meta]
+TODO
 
 [lumberjack]
 * fix go routine leaking
@@ -14,9 +17,10 @@ https://github.com/gabriel-vasile/mimetype
 * size, long
 * file-name, keyword
 * file-ext, keyword
+* mime-desc, text/keyword
 * mime-type, keyword
 * mime-subtype, keyword
-* extension, keyword
+* mime-encoding, keyword
 -------- extend meta
 * timestamp
 * year
@@ -25,5 +29,5 @@ https://github.com/gabriel-vasile/mimetype
 * hour
 * minute
 * second
-* country
-* city
+* location/country
+* location/city
