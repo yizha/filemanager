@@ -5,9 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	//"filemanager/storage"
-	"filemanager/blob"
-	"filemanager/filesystem"
+	fs "filemanager/filesystem"
 	"filemanager/logging"
 )
 
@@ -15,9 +13,9 @@ func main() {
 	lg := logging.GetLogger()
 	lg.Info().Msg("start testing ...")
 
-	inCh := make(chan *blob.FileBlob)
+	inCh := make(chan *fs.FileBlob)
 
-	go func(ch chan *blob.FileBlob) {
+	go func(ch chan *fs.FileBlob) {
 		filepath.Walk(os.Args[1], func(path string, info os.FileInfo, err error) error {
 			//fmt.Printf("file: %s, error: %v\n", path, err)
 			if err != nil {
@@ -25,7 +23,7 @@ func main() {
 				return err
 			}
 			if !info.IsDir() {
-				fb := blob.NewFileBlob(path)
+				fb := fs.NewFileBlob(path)
 				fb.Load()
 				ch <- fb
 			}
@@ -35,7 +33,7 @@ func main() {
 	}(inCh)
 
 	lg.Info().Msg("reading output ...")
-	for bm := range filesystem.DetectMimeType("/tmp", 100, inCh, lg) {
+	for bm := range fs.DetectMimeType("/tmp", 100, inCh, lg) {
 		fmt.Printf("%v\n", bm)
 	}
 }

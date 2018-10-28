@@ -5,9 +5,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
-// IsPathExists returns if the path exists or error
 func IsPathExists(p string) (bool, error) {
 	_, err := os.Stat(p)
 	if err == nil {
@@ -32,7 +32,7 @@ func PathToUrl(path string) *url.URL {
 }
 
 func FileExt(s string) string {
-	ext := filepath.Ext(s)
+	ext := strings.ToLower(filepath.Ext(s))
 	if len(ext) > 0 && ext[0:1] == "." {
 		return ext[1:]
 	} else {

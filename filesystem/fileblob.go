@@ -1,4 +1,4 @@
-package blob
+package filesystem
 
 import (
 	"crypto/sha1"
@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"filemanager/blob"
 	"filemanager/util"
 )
 
@@ -28,8 +29,8 @@ func (f *FileBlob) Path() string {
 }
 
 // Type returns storage.FileBlob
-func (f *FileBlob) Type() Type {
-	return TypeFile
+func (f *FileBlob) Type() blob.Type {
+	return blob.TypeFile
 }
 
 // Location returns the full path to the file on file system
@@ -88,7 +89,7 @@ func (f *FileBlob) ReadCloser() (io.ReadCloser, error) {
 	if f.blob == nil {
 		return nil, fmt.Errorf("underlying blob ([]byte) is nil")
 	}
-	return NewBufferedReadCloser(f.blob), nil
+	return blob.NewBufferedReadCloser(f.blob), nil
 }
 
 // Hash returns a *util.Hash object represents the hash

@@ -1,27 +1,23 @@
-package source
+package blob
 
 import (
 	"time"
-
-	"filemanager/blob"
 )
 
-type Source interface {
-
+type BlobSource interface {
 	// Load loads blobs from the source.
-	// It is a async operation which returns a Result object
+	// It is a async operation which returns a Status object
 	// immediately.
-	Load() Status
+	Load() LoadStatus
 }
 
-type Status interface {
+type LoadStatus interface {
 	ID() string
 	StartTime() time.Time
 	Duration() time.Duration
 	Count() int
 	Size() int64
 	ErrorCount() int
-	Blob() chan blob.Blob
+	Blob() chan Blob
 	Done() chan struct{}
-	JSONStr() string
 }

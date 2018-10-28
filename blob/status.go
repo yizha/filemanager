@@ -1,80 +1,18 @@
-package storage
+package blob
 
 import (
 	"encoding/json"
 	"sync/atomic"
 	"time"
 
-	"filemanager/blob"
 	"filemanager/logging"
 )
-
-// Storage is the interface for blob storage
-type Storage interface {
-
-	// Store stores all blobs from the given channel,
-	// the function is async and returns immediately
-	// the store progress and result can be quired by
-	// invoking corresponding functions on the returned
-	// StoreResult object.
-	Store(chan blob.Blob) StoreResult
-
-	// Scan scans blobs from this storage. It is async and
-	// returns immediately, the blobs can be read from the
-	// blob channel in the returned ScanResult as well as
-	// other useful info (counts, sizes, etc).
-	// to ignore it.
-	Scan() ScanResult
-}
-
-// StoreResult provides functions to get various data
-// of store operation.
-type StoreResult interface {
-	// ID() returns the id of the operation
-	ID() string
-
-	// start timestamp of the process
-	StartTime() time.Time
-
-	// duration of the process
-	Duration() time.Duration
-
-	// count of processed blobs
-	Count() int
-
-	// size of processed blobs, in bytes
-	Size() int64
-
-	// count of skipped blobs
-	SkipCount() int
-
-	// size of all skipped blobs, in bytes
-	SkipSize() int64
-
-	// count of process errors
-	ErrorCount() int
-
-	// the blob channel, from which reads the blob
-	Blob() chan blob.Blob
-
-	// the returned is closed when the operation completes
-	Done() chan int
-
-	// returns a string representation of above data
-	JSONStr() string
-}
-
-// ScanResult provides functions to get various data
-// of the scan operation.
-type ScanResult interface {
-	StoreResult
-}
 
 // ProcessResult is a struct which implements the
 // StoreResult/ScanResult interface along with other
 // useful functions, it is meant to be used by the
 // actual Storage implementation.
-type ProcessResult struct {
+type ProcessStatus struct {
 	id         string
 	typ        processType
 	startTime  time.Time
@@ -85,20 +23,20 @@ type ProcessResult struct {
 	skipCount  *int64
 	skipSize   *int64
 	errorCount *int64
-	blobChan   chan blob.Blob
-	doneChan   chan int
+	blobChan   chan Blob
+	doneChan   chan struct{}
 	done       *int32
 }
 
 type processType string
 
 const (
-	processTypeScan  processType = "scan"
+	processTypeLoad  processType = "load"
 	processTypeStore             = "store"
 )
 
-func newProcessResult(id string, typ processType) *ProcessResult {
-	return &ProcessResult{
+func NewProcessStatus(id string, typ processType) *ProcessStatus {
+	return &ProcessStatus{
 		id:         id,
 		typ:        typ,
 		startTime:  time.Now().UTC(),
@@ -109,39 +47,37 @@ func newProcessResult(id string, typ processType) *ProcessResult {
 		skipCount:  new(int64),
 		skipSize:   new(int64),
 		errorCount: new(int64),
-		blobChan:   make(chan blob.Blob),
-		doneChan:   make(chan int),
+		blobChan:   make(chan Blob),
+		doneChan:   make(chan struct{}),
 		done:       new(int32),
 	}
 }
 
-// NewScanResult creates a ProcessResult instance with given id
-func NewScanResult(id string) *ProcessResult {
-	return newProcessResult(id, processTypeScan)
+func NewLoadStatus(id string) *ProcessStatus {
+	return NewProcessStatus(id, processTypeLoad)
 }
 
-// NewStoreResult creates a ProcessResult instance with given id
-func NewStoreResult(id string) *ProcessResult {
-	return newProcessResult(id, processTypeStore)
+func NewStoreStatus(id string) *ProcessStatus {
+	return NewProcessStatus(id, processTypeStore)
 }
 
 // ID returns the id of this process result
-func (r *ProcessResult) ID() string {
+func (r *ProcessStatus) ID() string {
 	return r.id
 }
 
 // Type returns type of this process result
-func (r *ProcessResult) Type() string {
+func (r *ProcessStatus) Type() string {
 	return string(r.typ)
 }
 
 // StartTime returns the process start time.
-func (r *ProcessResult) StartTime() time.Time {
+func (r *ProcessStatus) StartTime() time.Time {
 	return r.startTime
 }
 
 // Duration returns the duration from its start time.
-func (r *ProcessResult) Duration() time.Duration {
+func (r *ProcessStatus) Duration() time.Duration {
 	if atomic.LoadInt32(r.done) == int32(1) {
 		if r.duration < 0 {
 			r.duration = r.finishTime.Sub(r.startTime)
@@ -152,68 +88,68 @@ func (r *ProcessResult) Duration() time.Duration {
 }
 
 // Count returns the processed blob number.
-func (r *ProcessResult) Count() int {
+func (r *ProcessStatus) Count() int {
 	return int(atomic.LoadInt64(r.count))
 }
 
 // Size returns the total size of processed blobs, in bytes.
-func (r *ProcessResult) Size() int64 {
+func (r *ProcessStatus) Size() int64 {
 	return atomic.LoadInt64(r.size)
 }
 
 // SkipCount returns the number of skipped blobs.
-func (r *ProcessResult) SkipCount() int {
+func (r *ProcessStatus) SkipCount() int {
 	return int(atomic.LoadInt64(r.skipCount))
 }
 
 // SkipSize returns the total size of skipped blobs, in bytes.
-func (r *ProcessResult) SkipSize() int64 {
+func (r *ProcessStatus) SkipSize() int64 {
 	return atomic.LoadInt64(r.skipSize)
 }
 
 // ErrorCount returns the number of process errors.
-func (r *ProcessResult) ErrorCount() int {
+func (r *ProcessStatus) ErrorCount() int {
 	return int(atomic.LoadInt64(r.errorCount))
 }
 
 // Blob returns a blob channel from which processed can be read.
-func (r *ProcessResult) Blob() chan blob.Blob {
+func (r *ProcessStatus) Blob() chan Blob {
 	return r.blobChan
 }
 
 // Done return a bool to indicate the process finishes or not.
-func (r *ProcessResult) Done() chan int {
+func (r *ProcessStatus) Done() chan struct{} {
 	return r.doneChan
 }
 
 // AddCount increases the blob count by the given number.
-func (r *ProcessResult) AddCount(n int) {
+func (r *ProcessStatus) AddCount(n int) {
 	atomic.AddInt64(r.count, int64(n))
 }
 
 // AddSize increases the blob size by the given number.
-func (r *ProcessResult) AddSize(n int64) {
+func (r *ProcessStatus) AddSize(n int64) {
 	atomic.AddInt64(r.size, n)
 }
 
 // AddSkipCount increases the blob skip count by the given number.
-func (r *ProcessResult) AddSkipCount(n int) {
+func (r *ProcessStatus) AddSkipCount(n int) {
 	atomic.AddInt64(r.skipCount, int64(n))
 }
 
 // AddSkipSize increases the blob skip size by the given number.
-func (r *ProcessResult) AddSkipSize(n int64) {
+func (r *ProcessStatus) AddSkipSize(n int64) {
 	atomic.AddInt64(r.skipSize, n)
 }
 
 // AddErrorCount increases the error count by the given number.
-func (r *ProcessResult) AddErrorCount(n int) {
+func (r *ProcessStatus) AddErrorCount(n int) {
 	atomic.AddInt64(r.errorCount, int64(n))
 }
 
 // Finish sets the finish time, closes the blob channel, the
 // error channel and the done channel.
-func (r *ProcessResult) Finish() {
+func (r *ProcessStatus) Finish() {
 	r.finishTime = time.Now().UTC()
 	atomic.StoreInt32(r.done, int32(1))
 	close(r.blobChan)
@@ -222,7 +158,7 @@ func (r *ProcessResult) Finish() {
 
 // JSONStr returns json encoded string of the stats data
 // this object carries.
-func (r *ProcessResult) JSONStr() string {
+func (r *ProcessStatus) JSONStr() string {
 	tsFmt := "2006-01-02T15:04:05.999999"
 	done := atomic.LoadInt32(r.done) == int32(1)
 	finishTs := ""

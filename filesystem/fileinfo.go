@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"filemanager/blob"
+	//"filemanager/blob"
 	"filemanager/meta"
 	"filemanager/util"
 
@@ -149,7 +149,7 @@ func writeFileList(f *os.File, path2meta map[string]*meta.BlobMeta) error {
 
 func detect(
 	workDir string,
-	files []*blob.FileBlob,
+	files []*FileBlob,
 	outCh chan *meta.MetaExtractResult,
 	wg *sync.WaitGroup) {
 
@@ -199,11 +199,11 @@ func detect(
 func dispatch(
 	workDir string,
 	batch int,
-	inCh chan *blob.FileBlob,
+	inCh chan *FileBlob,
 	outCh chan *meta.MetaExtractResult) {
 
 	wg := &sync.WaitGroup{}
-	files := make([]*blob.FileBlob, batch, batch)
+	files := make([]*FileBlob, batch, batch)
 	i := 0
 	for f := range inCh {
 		files[i] = f
@@ -211,7 +211,7 @@ func dispatch(
 		if i >= batch {
 			wg.Add(1)
 			go detect(workDir, files[0:i], outCh, wg)
-			files = make([]*blob.FileBlob, batch, batch)
+			files = make([]*FileBlob, batch, batch)
 			i = 0
 		}
 	}
@@ -244,7 +244,7 @@ func output(
 func DetectMimeType(
 	workDir string,
 	batch int,
-	inCh chan *blob.FileBlob,
+	inCh chan *FileBlob,
 	lg *zerolog.Logger) chan *meta.BlobMeta {
 
 	midCh := make(chan *meta.MetaExtractResult)
